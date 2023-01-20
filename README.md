@@ -1,3 +1,12 @@
+# TODO
+
+[] Admin Page
+[] Color for names / players
+[] Player select for kill
+[] Sabotage: turn red, webpage for laptop, other phone tasks to solve
+[] local (webclient) countdown of sabotage / kill timer
+
+
 # Getting Started with Create React App
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
