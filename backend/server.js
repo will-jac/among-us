@@ -1,7 +1,7 @@
 // const app = require('express')();
 // const cors = require('cors')
-var uuidv4 = require('uuid').v4;
-var WebSocketServer = require('websocket').server;
+const uuidv4 = require('uuid').v4;
+const WebSocketServer = require('websocket').server;
 
 // set up the HTTP server (websockets hosts off this as well)
 const server = require('http').createServer((req, resp) => {
@@ -29,7 +29,8 @@ server.listen(3030, () => {
 // init websocket server
 const wsServer = new WebSocketServer({
   httpServer: server,
-  autoAcceptConnections: false
+  autoAcceptConnections: false,
+  keepaliveInterval: 2000000
 });
 
 // default task list
@@ -256,15 +257,12 @@ const names = shuffle([
   'Tomato',
   'Zucchini',
 ])
-var next_name_idx = 0;
+let next_name_idx = 0;
 
 // map gameID -> gamestate
 const games = {}
 // map of uuid -> {player}
 const players = {}
-
-// map connection -> {gameID, name}
-const connections = {}
 
 const MessageTypes = {
   create_game: 'create_game',
@@ -279,6 +277,9 @@ const MessageTypes = {
   play_again: 'play_again',
   heartbeat: 'heartbeat',
   fix_sabotage: 'fix_sabotage',
+  settings: 'settings',
+  delete_game: 'delete',
+  ack: 'ack',
 }
 
 const GameStatus = {
@@ -391,6 +392,7 @@ const InitialGameState = {
   kill_cooldown: 1,
   num_imposters: 1,
   emergency_meetings_allowed: 0, 
+  sabotage_allowed: true,
 
   // game state
   // public
@@ -403,9 +405,7 @@ const InitialGameState = {
   unreported_dead_bodies: 0,
   // num_tasks: 0 // calculated on sending
   // num_tasks_complete: 0 // calculated on sending
-  // TODO
-  active_event: null,
-
+  
   // player roles -> name
   player_roles: {
     admin: '',
@@ -435,9 +435,14 @@ function sabotage_countdown(game_id) {
     console.log('failed sabotage countdown', game_id);
     return;
   }
+  if (games[game_id].status !== GameStatus.playing) {
+    return;
+  }
+
   games[game_id].sabotage_timer -= 1;
-  if (games[game_id].sabotage_timer === 0) {
+  if (games[game_id].sabotage_timer <= 0) {
     games[game_id].can_sabotage = true;
+    games[game_id].sabotage_timer = 0;
   } else {
     // keep counting down
     setTimeout(() => sabotage_countdown(game_id), 1000);
@@ -452,9 +457,15 @@ function kill_countdown(game_id, player_id) {
     console.log('failed kill countdown', game_id, player_id);
     return;
   }
+
+  if (games[game_id].status !== GameStatus.playing && games[game_id].status !== GameStatus.sabotaged) {
+    return;
+  }
+
   games[game_id].players[player_id].kill_timer -= 1;
-  if (games[game_id].players[player_id].kill_timer === 0) {
+  if (games[game_id].players[player_id].kill_timer <= 0) {
     games[game_id].players[player_id].can_kill = true;
+    games[game_id].players[player_id].kill_timer = 0;
   } else {
     // keep counting down
     setTimeout(() => kill_countdown(game_id, player_id), 1000);
@@ -465,7 +476,7 @@ function kill_countdown(game_id, player_id) {
 
 // shuffle things
 function shuffle(array) {
-  var shuffled = array.slice(0), i = array.length, temp, index;
+  let shuffled = array.slice(0), i = array.length, temp, index;
   while (i--) {
     index = Math.floor((i + 1) * Math.random());
     temp = shuffled[index];
@@ -488,11 +499,23 @@ function get_player_gamestate(player_id) {
   const is_imposter = is_player ? gs.player_roles.imposters.includes(player_id) : false;
 
   // public to all players
-  var gamestate = {
+  const gamestate = {
+    // game settings
+    settings:  {
+      num_tasks: gs.num_tasks,
+      num_tasks_shown: gs.num_tasks_shown,
+      sabotage_cooldown: gs.sabotage_cooldown,
+      kill_cooldown: gs.kill_cooldown,
+      num_imposters: gs.num_imposters,
+      sabotage_allowed: gs.sabotage_allowed,
+      possible_tasks: gs.possible_tasks,
+    },
+
+
     game_id: gs.game_id,
     status: gs.status,
     winner: gs.winner,
-
+    
     num_players: gs.player_roles.all_players.length,
     players: gs.player_roles.all_players.map(p_id => {
       return {
@@ -502,6 +525,7 @@ function get_player_gamestate(player_id) {
         is_alive: gs.players[p_id].is_alive,
       }
     }),
+
     public_kill_count: gs.public_kill_count,
     // TODO: memoize this
     num_tasks: gs.player_roles.all_players.map(p_id => gs.players[p_id].tasks ? gs.players[p_id].tasks.length : 0).reduce((s,a) => s + a, 0),
@@ -542,7 +566,8 @@ function send_player_update(player_id, message='', gamestate_override={}) {
   }
   
   if (!(players[player_id].game_id in games)) {
-    console.log('game not found, sending heartbeat');
+    console.log('sending INIT, games:', Object.keys(games));
+
     players[player_id].connection.sendUTF(JSON.stringify({
       type: 'init',
       player_id: player_id,
@@ -551,7 +576,7 @@ function send_player_update(player_id, message='', gamestate_override={}) {
     return;
   }
 
-  var gamestate = get_player_gamestate(player_id);
+  let gamestate = get_player_gamestate(player_id);
 
   // send the gamestate and message to the connection
   // console.log('sending gamestate', player_id, gamestate);
@@ -578,6 +603,7 @@ wsServer.on('request', function(request) {
   
   const connection = request.accept('echo-protocol', request.origin);
   console.log((new Date()) + ' Connection accepted.');
+  // console.log(connection);
 
   // connection init, send an init with the available games
   connection.sendUTF(JSON.stringify({
@@ -591,14 +617,14 @@ wsServer.on('request', function(request) {
       console.log("Error, unrecognized message type!", message);
       return;
     }
-    // print a debug message:
-    // console.log('available games:', games);
-
-    // console.log(message.utf8Data)
-    var msg = JSON.parse(message.utf8Data);
-    console.log('recv message:', msg);
+    const msg = JSON.parse(message.utf8Data);
     // parse the message
     const player_id = msg.player_id;
+
+    // no communicating with bad clients
+    if (player_id === '') {
+      return;
+    }
     
     // if we don't have this player yet, create the player and cache them
     if (!(player_id in players)) {
@@ -612,15 +638,20 @@ wsServer.on('request', function(request) {
 
     // make sure our connection is current
     players[player_id].connection = connection;
-    connections[connection] = player_id;
-
     const player = players[player_id];
 
+    connection.player_id = player_id;
+
+    // HEARTBEAT
     if (msg.type === MessageTypes.heartbeat) {
       send_player_update(player_id);
       return;
     }
-
+    // ACK
+    if (msg.type === MessageTypes.ack) {
+      // noop - this is in response to anything, including a heartbeat
+      return;
+    }
     // CREATE GAME
     if (msg.type === MessageTypes.create_game) 
     {
@@ -664,11 +695,24 @@ wsServer.on('request', function(request) {
       games[msg.game_id].player_roles.all_players.push(player_id);
       games[msg.game_id].player_names.push(player.player_name);
 
+      // if there's no admin, make them admin
+      if (!(games[msg.game_id].player_roles.admin in players)) {
+        games[msg.game_id].player_roles.admin = player_id;
+      }
+
       update_all_players(msg.game_id);
       return;
     }
     // at this point, assume we have a good gamestate associated with the player
     const game_id = player.game_id;
+    if (!(game_id in games)) {
+      // failure! Disregard the message, can't do anything with it
+      console.error('failed to process message', msg);
+      // tell the client of the error
+      send_player_update(player_id, "Unknown Game: That didn't work out, please try again or make a bug report:" + msg);
+      return;
+    }
+    const gs = games[game_id];
 
     // LEAVE GAME
     if (msg.type === MessageTypes.leave_game) {
@@ -683,28 +727,16 @@ wsServer.on('request', function(request) {
       }
       
       // remove the player from the game
-      delete games[game_id].players[player_id];
-      games[game_id].player_roles.all_players = games[game_id].player_roles.all_players.filter((value) => value !== player.player_id);
-      games[game_id].player_names = games[game_id].player_names.filter((value) => value !== player.player_name);
+      delete gs.players[player_id];
+      gs.player_roles.all_players = gs.player_roles.all_players.filter((value) => value !== player.player_id);
+      gs.player_names = gs.player_names.filter((value) => value !== player.player_name);
       player.game_id = '';
 
       update_all_players(game_id);
       send_player_update(player_id);
       return;
     }
-
-
-    if (!(game_id in games)) {
-      // failure! Disregard the message, can't do anything with it
-      console.error('failed to process message', msg);
-      // tell the client of the error
-      send_player_update(player_id, "Unknown Game: That didn't work out, please try again or make a bug report:" + msg);
-      return;
-    }
-    const gs = games[game_id];
-
-    // set name (and thus join game)
-    // TODO: join an in-progress game?
+    // SET NAME
     if (msg.type === MessageTypes.set_player_name) {
       console.log('trying to change name:', player.player_name, msg.player_name);
       if (gs.status !== GameStatus.lobby) {
@@ -739,8 +771,26 @@ wsServer.on('request', function(request) {
       //   return;
       // }
     }
+    // EDIT SETTINGS
+    if (msg.type === MessageTypes.settings) {
+      // TODO: validation
+      console.log('got settings', msg.settings);
+      gs.num_tasks = {
+        easy: Math.max(0, Number(msg.settings.num_tasks.easy)),
+        medium: Math.max(0, Number(msg.settings.num_tasks.medium)),
+        hard: Math.max(0, Number(msg.settings.num_tasks.hard)),
+      };
+      gs.num_tasks_shown = Math.max(0, Number(msg.settings.num_tasks_shown));
+      gs.sabotage_cooldown = Math.max(0, Number(msg.settings.sabotage_cooldown));
+      gs.kill_cooldown = Math.max(0, Number(msg.settings.kill_cooldown));
+      gs.num_imposters = Math.max(1, Number(msg.settings.num_imposters));
+      gs.sabotage_allowed = Boolean(msg.settings.sabotage_allowed);
+      gs.possible_tasks = msg.settings.possible_tasks;
 
-    // start game
+      update_all_players(game_id);
+      return;
+    }
+    // START GAME
     else if (msg.type === MessageTypes.start_game) {
       if (player_id !== gs.player_roles.admin) {
         // disregard, illegal request - only admin can start the game
@@ -758,7 +808,7 @@ wsServer.on('request', function(request) {
       gs.unreported_dead_bodies = 0;
       gs.active_event = null;
       gs.can_sabotage = false;
-      gs.sabotage_timer = gs.sabotage_cooldown+1;
+      gs.sabotage_timer = Number(gs.sabotage_cooldown)+1;
       // assign an imposter and crewmates
       gs.player_roles.imposters = getRandomSubarray(gs.player_roles.all_players, gs.num_imposters);
       gs.player_roles.crewmates = [];
@@ -778,7 +828,7 @@ wsServer.on('request', function(request) {
         p.all_tasks_complete = false;
         p.can_emergency_meeting = gs.emergency_meetings_allowed > 0;
         p.can_kill = false;
-        p.kill_timer = gs.kill_cooldown+1;
+        p.kill_timer = Number(gs.kill_cooldown)+1;
         p.kill_count = 0;
         p.sabotage_count = 0;
 
@@ -791,7 +841,7 @@ wsServer.on('request', function(request) {
 
         // only show some tasks for the players
         p.visible_tasks = [];
-        for (var i = 0; i < gs.num_tasks_shown; i++) {
+        for (let i = 0; i < gs.num_tasks_shown; i++) {
           p.visible_tasks.push(p.invisible_tasks.pop());
         }
       });
@@ -803,14 +853,15 @@ wsServer.on('request', function(request) {
       // actually start the game (clear the message with a server update)
       setTimeout(() => update_all_players(game_id), 5000);
 
-      // TODO: start imposter kill / sabotage counts
+      // start imposter kill / sabotage counts
       gs.player_roles.imposters.forEach(p_id => {
-        console.log('starting kill countdown', game_id, p_id);
         kill_countdown(game_id, p_id);
       });
-      console.log('starting sabotage countdown');
-      sabotage_countdown(game_id);
+      if (gs.sabotage_allowed) {
+        sabotage_countdown(game_id);
+      }
     }
+    // END GAME
     else if (msg.type === MessageTypes.end_game) {
       gs.status = GameStatus.game_over;
       gs.winner = 'No one '
@@ -819,9 +870,10 @@ wsServer.on('request', function(request) {
       update_all_players(game_id, 'Game Over!');
       return;
     }
+    // PLAY AGAIN
     else if (msg.type === MessageTypes.play_again) {
       // game must be ended
-      if (gs.status !== 'game_over') {
+      if (gs.status !== GameStatus.game_over) {
         send_player_update(player_id, 'Cannot reset a game in progress!');
         console.error('illegal state, tried to restart a game that is not over!', msg, gs);
         return;
@@ -831,7 +883,30 @@ wsServer.on('request', function(request) {
       update_all_players(game_id, 'Playing again');
       return;
     }
-    
+    // DELETE GAME
+    else if (msg.type === MessageTypes.delete_game) {
+      if (player_id !== gs.player_roles.admin) {
+        // disregard, illegal request - only admin can start the game
+        send_player_update(player_id, 'Only an admin can delete the game!');
+        console.error('illegal request: player ' + player_id + ' tried to delete game ' + game_id + ' when admin is ' + gs.player_roles.admin);
+        return;
+      }
+      if (gs.status !== GameStatus.lobby) {
+        send_player_update(player_id, 'Cannot delete a game in progress!');
+        console.error('illegal state, tried to delete a game that is not over!', msg, gs);
+        return;
+      }
+      let game_id = gs.game_id;
+      console.log('DELETING GAME', game_id);
+
+      gs.player_roles.all_players.forEach(p_id => {
+        players[p_id].game_id = ''
+      });
+      delete games[game_id];
+
+      heartbeat();
+    }
+    // COMPLETE TASK
     else if (msg.type === MessageTypes.complete_task) {
       if (gs.status !== GameStatus.playing) {
         // cannot do anything during sabotage
@@ -841,8 +916,8 @@ wsServer.on('request', function(request) {
       }
       
       // check that the client isn't lying
-      var complete_task = false;
-      var task_idx;
+      let complete_task = false;
+      let task_idx;
       for (task_idx = 0; task_idx < player.visible_tasks.length; task_idx++) {
         if (player.visible_tasks[task_idx].id === msg.id && !player.visible_tasks[task_idx].completed) {
           complete_task = true;
@@ -882,8 +957,9 @@ wsServer.on('request', function(request) {
       // only need to update the player who completed the task
       send_player_update(player_id);
     }
+    // SABOTAGE
     else if (msg.type === MessageTypes.sabotage) {
-      if (!gs.can_sabotage || gs.status !== GameStatus.playing) {
+      if (!gs.sabotage_allowed || !gs.can_sabotage || gs.status !== GameStatus.playing) {
         send_player_update(player_id, 'Cannot sabotage right now!');
         console.error('illegal message, cannot sabotage right now', gs, msg);
         return;
@@ -899,6 +975,7 @@ wsServer.on('request', function(request) {
       update_all_players(game_id);
       return;
     }
+    // KILL
     else if (msg.type === MessageTypes.kill) {
       if (!player.can_kill || gs.status !== GameStatus.playing) {
         send_player_update(player_id, 'Cannot kill right now!');
@@ -914,12 +991,13 @@ wsServer.on('request', function(request) {
 
       // update the client with the kill cooldown every second
       player.kill_timer = gs.kill_cooldown + 1;
-      kill_countdown(player_id);
+      kill_countdown(player.game_id, player_id);
 
       // TODO: check if the game is over
       
       return;
     }
+    // FIX SABOTAGE
     else if (msg.type === MessageTypes.fix_sabotage) {
       if (gs.status !== GameStatus.sabotaged) {
         console.log('cannot fix sabotage right now');
@@ -934,53 +1012,90 @@ wsServer.on('request', function(request) {
     // - dead body reported
   });
 
-  
   connection.on('close', function(reasonCode, description) {
-    console.log((new Date()) + ' Peer ' + connection.remoteAddress + ' disconnected.');
-
-    if (!(connection in connections)) {
-      // player never made it in to a game
-      // can't recover if we can't find the connection
-      console.log('cannot prune connection, it is not cached');
-      return;
-    }
+    console.log((new Date()) + ' Peer ' + connection.remoteAddress + ' disconnected.', reasonCode, description);
     
-    var player_id = connections[connection];
-    
+    console.log('player id of diconnected connection:', connection.player_id);
+  
+    const player_id = connection.player_id;
     if (!(player_id in players)) {
       console.log('cannot prune player, it is not cached');
       return;
     }
+
     const p = players[player_id];
     if (!(p.game_id in games)) {
       console.log('cannot prune game, it is not cached');
       return;
     }
     const gs = games[p.game_id];
+    console.log('player is leaving', p.player_name, player_id);
+    console.log('player leaving game', gs);
 
-    // add player to disconnected players
-    if (!gs.disconnected_players.includes(player_id)) {
-      gs.disconnected_players.push(player_id);
+    prunePlayer(player_id);
+
+  });
+});
+
+function prunePlayer(player_id) {
+  // console.log('pruning', player_id, players[player_id].connection.connected);
+  // don't prune connected players
+  if (players[player_id].connection.connected) return;
+
+  const p = players[player_id]
+
+  // this player is not connected any more, can we prune?
+  if (p.game_id in games) {
+    let gs = games[p.game_id]
+
+    if (gs.status === GameStatus.lobby) {
+      // okay, we can prune this player - delete them from everything
+      delete gs.players[player_id];
+      let i = gs.player_names.indexOf(p.player_name);
+      if (i > -1) {
+        gs.player_names.splice(i, 1);
+      }
+      i = gs.player_roles.all_players.indexOf(player_id);
+      if (i > -1) {
+        gs.player_roles.all_players.splice(i, 1);
+      }
+
+      delete players[player_id];
     }
 
-    // if this is the last player, kill the game
-    if (gs.player_roles.all_players.length === gs.disconnected_players.length) {
-      console.log('killing game',p.game_id,'due to inactivity', gs.players.length, gs.disconnected_players.length);
-      delete games[p.game_id];
-      return;
-    }
-
-    // game still going - re-assign admin if needed
     if (player_id === gs.player_roles.admin) {
-      console.log('re-assigning admin');
-      // get the next player (that's not in disconnected players) and make them the admin
-      for (var i = 0; i < gs.player_roles.all_players.length; i++) {
-        const n = gs.player_roles.all_players[i];
-        if (!(n in gs.disconnected_players)) {
-          games[p.game_id].player_roles.admin = n;
+      // get the next player (that is connected) and make them the admin
+      for (let i = 0; i < gs.player_roles.all_players.length; i++) {
+        const p_id = gs.player_roles.all_players[i];
+        if (players[p_id].connection.connected) {
+          gs.player_roles.admin = p_id;
+          console.log('new admin is', p_id);
+          send_player_update(p_id);
           break;
         }
       }
     }
+    return;
+  }
+  // okay, this player is not in any game - delete them
+  delete players[player_id];
+}
+
+function heartbeat(should_beat = false) {
+  console.log('heartbeat', Object.keys(players));
+
+  Object.keys(players).forEach((p_id) => {
+    if (p_id in players) {
+      // try to prune
+      prunePlayer(p_id);
+      send_player_update(p_id);
+    }
   });
-});
+  
+  if (should_beat) {
+    setTimeout(() => heartbeat(should_beat), 10000);
+  }
+}
+
+// callback is a self-loop so this should beat always
+heartbeat(true);

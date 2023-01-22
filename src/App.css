@@ -36,9 +36,34 @@
     transform: rotate(360deg);
   }
 }
+.gameJoinTable {
+  width: 70vw;
+  /* padding: 15px; */
+  border-spacing: 15px;
+  text-align: center;
+}
+.centerButton {
+  text-align: center;
+}
+.taskEditor {
+  text-align: left;
+  margin: 5px;
+}
+.gameEditorTable {
+  width: 80vw;
+  padding: 15px;
+  border-spacing: 10px;
+}
 .tasklist {
   text-align: left;
 }
+.taskInput {
+  width: 90%
+}
+.taskDescription {
+  width: 50vw;
+}
+
 .task {
   margin:15px;
 }
