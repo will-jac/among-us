@@ -1,6 +1,7 @@
 # TODO
 
 [] Admin Page
+[] Way to save / load game configuration
 [] Color for names / players
 [] Player select for kill
 [] Sabotage: turn red, webpage for laptop, other phone tasks to solve
