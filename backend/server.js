@@ -22,8 +22,8 @@ const server = require('http').createServer((req, resp) => {
 });
   
 // init server
-server.listen(3030, () => {
-  console.log('server listening on port 3030')
+server.listen(9030, () => {
+  console.log('server listening on port 9030')
 });
 
 // init websocket server
@@ -258,6 +258,8 @@ const names = shuffle([
   'Zucchini',
 ])
 let next_name_idx = 0;
+
+console.log('server startup!!')
 
 // map gameID -> gamestate
 const games = {}

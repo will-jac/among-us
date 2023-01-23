@@ -32,7 +32,7 @@ const GameStatus = {
 
 const W3CWebSocket = require('websocket').w3cwebsocket;
 
-const client = new W3CWebSocket('ws://192.168.0.29:3030/', 'echo-protocol');
+const client = new W3CWebSocket('ws://localhost:9030/', 'echo-protocol');
 
 client.onerror = function() {
   console.log('Connection Error');
