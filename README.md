@@ -1,3 +1,11 @@
+# Docker
+
+docker build . -t willjac/amongus
+docker run -p 9000:9000 -p 9030:9030 -d will-jac/amongus
+
+deploy:
+docker image push willjac/amongus
+
 # TODO
 
 [] Admin Page

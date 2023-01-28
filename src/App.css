@@ -1,5 +1,9 @@
 .App {
   text-align: center;
+  background-color: #282c34;
+  /* background-color: black; */
+  color: white;
+  font-size: calc(10px + 2vmin);
 }
 
 .App-logo {
@@ -14,14 +18,11 @@
 }
 
 .App-header {
-  background-color: #282c34;
-  min-height: 100vh;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
+  /* justify-content: center; */
+  min-height: 100vh;
 }
 
 .App-link {
@@ -36,8 +37,10 @@
     transform: rotate(360deg);
   }
 }
+.wideInput {
+  width: 100%
+}
 .gameJoinTable {
-  width: 70vw;
   /* padding: 15px; */
   border-spacing: 15px;
   text-align: center;
@@ -47,29 +50,109 @@
 }
 .taskEditor {
   text-align: left;
-  margin: 5px;
 }
 .gameEditorTable {
-  width: 80vw;
-  padding: 15px;
-  border-spacing: 10px;
+  width: 100%;
+  /* padding: 15px; */
+  border-spacing: 5px;
+  /* padding: 30px 0; */
+  /* margin: 5px; */
 }
-.tasklist {
+.imposter_table {
   text-align: left;
+  margin: auto;
+  width: 70%;
+}
+.imposter_table > th,td {
+  padding: 0px;
+}
+th, td {
+  padding-bottom: 5px;
+}
+.add_task_row {
+  padding-bottom: 30px;
 }
 .taskInput {
   width: 90%
 }
-.taskDescription {
-  width: 50vw;
+.tasklist {
+  text-align: left;
+}
+.task_grid {
+  width: 90vw;
+  display: grid;
+  column-gap: 5vw;
+  padding: 5vw;
+  grid-template-columns: 60vw 15vw;
+  align-items: center;
 }
 
-.task {
-  margin:15px;
+
+.task_button {
+  /* margin:15px; */
+  text-align: left;
 }
-.task-button {
+.task_rules {
+  grid-column: 1 / span 2;
+  /* grid-column-start: 1;
+  grid-column-end: 3; */
   margin-left: 30px;
+  margin-right: 30px;
 }
+.task_icon {
+  margin-top: 5px;
+  margin-left: 10px;
+}
+.flex_row {
+  display: flex;
+  align-items: bottom;
+}
+.button {
+  border: none;
+  /* padding: 15px 32px; */
+  padding: 10px;
+  text-align: center;
+  text-decoration: none;
+  display: inline-block;
+  font-size: 14px;
+}
+.button:hover {
+  filter: brightness(0.9);
+}
+.button:active {
+  filter: brightness(0.7);
+}
+.settings {
+  background-color: purple;
+  color: white;
+}
+.back {
+  background-color: darkcyan;
+  color: white;
+}
+.kill {
+  background-color: darkred;
+  color: white;
+}
+.sabotage {
+  background-color: rgb(156, 86, 0);
+  color: white;
+}
+.disabled {
+  background-color: lightgray;
+  color: black;
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.task-complete {
+  background-color: darkgreen;
+  color: white;
+}
+
+.button_icon {
+  margin: 0 5px 0 0;
+}
+
 .popup {
   position: fixed;
   width: 100%;
@@ -90,4 +173,14 @@
   margin: auto;
   border-radius: 20px;
   background: white;
+}
+
+
+
+.admin {
+  margin: 5vw 0 5vw 0;
+}
+
+.imposter_actions {
+
 }

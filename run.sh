@@ -6,5 +6,6 @@ node server.js &
 
 
 echo Starting frontend server...
-cd ../src
-npm start
+cd ../
+serve -l 9000 -s build
+
