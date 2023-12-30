@@ -14,7 +14,7 @@ RUN npm i -g serve
 RUN npm ci --only=production
 
 # Bundle app source
-COPY build build
+RUN npm build
 COPY backend backend
 COPY .env .
 COPY run.sh .
